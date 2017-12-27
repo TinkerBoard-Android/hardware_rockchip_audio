@@ -51,6 +51,11 @@
 FILE *in_debug;
 #endif
 
+#ifdef TINKER_AUDIO
+#include <cutils/properties.h>
+#define AUDIO_OUTPUT_DEVICE "persist.audio.output"
+#endif
+
 int in_dump(const struct audio_stream *stream, int fd);
 int out_dump(const struct audio_stream *stream, int fd);
 
@@ -563,6 +568,39 @@ static int start_output_stream(struct stream_out *out)
     int ret = 0;
 
     ALOGD("%s",__FUNCTION__);
+
+#ifdef TINKER_AUDIO
+    char prop_audio_output[PROP_VALUE_MAX] = {0};
+    property_get(AUDIO_OUTPUT_DEVICE, prop_audio_output, NULL);
+
+    if (prop_audio_output[0] == '0') {
+        PCM_CARD = 0;
+        PCM_CARD_HDMI = 0;
+        PCM_DEVICE = 0;
+        ALOGD("card 0 , device 0 : HDMI");
+    } else if (prop_audio_output[0] == '1') {
+        PCM_CARD = 3;
+        PCM_CARD_HDMI = 3;
+        PCM_DEVICE = 0;
+        ALOGD("card 3 , device 0 : SPDIF");
+    } else if (prop_audio_output[0] == '2') {
+        PCM_CARD = 3;
+        PCM_CARD_HDMI = 3;
+        PCM_DEVICE = 2;
+        ALOGD("card 3 , device 2 : Headset");
+    } else if (prop_audio_output[0] == '4') {
+        PCM_CARD = 1;
+        PCM_CARD_HDMI = 1;
+        PCM_DEVICE = 0;
+        ALOGD("card 1 , device 0 : USB");
+    } else {
+        PCM_CARD = 0;
+        PCM_CARD_HDMI = 0;
+        PCM_DEVICE = 0;
+        ALOGD("card 0 , device 0 : HDMI");
+    }
+#endif
+
     if (out == adev->outputs[OUTPUT_HDMI_MULTI]) {
         force_non_hdmi_out_standby(adev);
     } else if (adev->outputs[OUTPUT_HDMI_MULTI] && !adev->outputs[OUTPUT_HDMI_MULTI]->standby) {
@@ -602,6 +640,10 @@ static int start_output_stream(struct stream_out *out)
     connect_hdmi = true;
     route_pcm_open(getRouteFromDevice(out->device));
 
+#ifdef TINKER_AUDIO
+    out->pcm_device = PCM_DEVICE;
+#endif
+
     if (out->device & AUDIO_DEVICE_OUT_AUX_DIGITAL) {
         if (connect_hdmi) {
 #ifdef BOX_HAL
@@ -631,8 +673,13 @@ static int start_output_stream(struct stream_out *out)
 
     if (out->device & (AUDIO_DEVICE_OUT_SPEAKER |
                        AUDIO_DEVICE_OUT_WIRED_HEADSET |
+#ifdef TINKER_AUDIO
+                       AUDIO_DEVICE_OUT_WIRED_HEADPHONE
+#else
                        AUDIO_DEVICE_OUT_WIRED_HEADPHONE |
-                       AUDIO_DEVICE_OUT_ALL_SCO)) {
+                       AUDIO_DEVICE_OUT_ALL_SCO
+#endif
+    )) {
 
         out->pcm[PCM_CARD] = pcm_open(PCM_CARD, out->pcm_device,
                                       PCM_OUT | PCM_MONOTONIC, &out->config);
@@ -662,10 +709,27 @@ static int start_output_stream(struct stream_out *out)
     adev->out_device |= out->device;
 
     if (out->device & AUDIO_DEVICE_OUT_ALL_SCO) {
+#ifndef TINKER_AUDIO
         start_bt_sco(adev);
-#ifdef BT_AP_SCO // HARD CODE FIXME
+#endif
+
+#ifdef BT_AP_SCO
         out->pcm[PCM_BT] = pcm_open(PCM_BT, 0,
                                     PCM_OUT | PCM_MONOTONIC, &pcm_config_ap_sco);
+
+        ret = create_resampler(48000,
+                               8000,
+                               2,
+                               RESAMPLER_QUALITY_DEFAULT,
+                               NULL,
+                               &out->resampler);
+        if (ret != 0) {
+            ret = -EINVAL;
+        }
+#elif defined(TINKER_AUDIO)
+        out->pcm[PCM_BT] = pcm_open(PCM_BT, PCM_DEVICE_SCO_OUT,
+                                    PCM_OUT | PCM_MONOTONIC, &pcm_config_ap_sco);
+
         ret = create_resampler(48000,
                                8000,
                                2,
@@ -779,11 +843,16 @@ static int start_input_stream(struct stream_in *in)
 
     in_dump(in, 0);
     route_pcm_open(getRouteFromDevice(in->device | AUDIO_DEVICE_BIT_IN));
-#ifdef RK3399_LAPTOP //HARD CODE FIXME
+#if defined(RK3399_LAPTOP) || defined(TINKER_AUDIO) //HARD CODE FIXME
     if ((in->device & AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET) &&
             (adev->mode == AUDIO_MODE_IN_COMMUNICATION)) {
         in->config = &pcm_config_in_bt;
+
+#ifdef TINKER_AUDIO
+        in->pcm = pcm_open(PCM_BT, PCM_DEVICE_SCO_IN, PCM_IN, in->config);
+#else
         in->pcm = pcm_open(PCM_BT, PCM_DEVICE, PCM_IN, in->config);
+#endif
 
         if (in->resampler) {
             release_resampler(in->resampler);
@@ -803,7 +872,12 @@ static int start_input_stream(struct stream_in *in)
         }
     } else {
         in->config = &pcm_config_in;
+
+#ifdef TINKER_AUDIO
+        in->pcm = pcm_open(PCM_CARD_IN, PCM_DEVICE_IN, PCM_IN, in->config);
+#else
         in->pcm = pcm_open(PCM_CARD, PCM_DEVICE, PCM_IN, in->config);
+#endif
 
         if (in->resampler) {
             release_resampler(in->resampler);
@@ -840,9 +914,10 @@ static int start_input_stream(struct stream_in *in)
     adev->in_device = in->device;
     adev->in_channel_mask = in->channel_mask;
 
-
+#ifndef TINKER_AUDIO
     if (in->device & AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET)
         start_bt_sco(adev);
+#endif
 
     /* initialize volume ramp */
     in->ramp_frames = (CAPTURE_START_RAMP_MS * in->requested_rate) / 1000;
@@ -1610,7 +1685,11 @@ false_alarm:
     } else {
         for (i = 0; i < PCM_TOTAL; i++)
             if (out->pcm[i]) {
+#ifdef TINKER_AUDIO
+                if ((i == PCM_BT) && (out->device & AUDIO_DEVICE_OUT_ALL_SCO)) {
+#else
                 if (i == PCM_BT) {
+#endif
                     // HARD CODE FIXME 48000 stereo -> 8000 stereo
                     size_t inFrameCount = bytes/2/2;
                     size_t outFrameCount = inFrameCount/6;
@@ -2711,7 +2790,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
     in->flags = flags;
     struct pcm_config *pcm_config = flags & AUDIO_INPUT_FLAG_FAST ?
                                             &pcm_config_in_low_latency : &pcm_config_in;
-#ifdef BT_AP_SCO
+#if defined(BT_AP_SCO) || defined(TINKER_AUDIO)
     if (adev->mode == AUDIO_MODE_IN_COMMUNICATION && in->device & AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET) {
         pcm_config = &pcm_config_in_bt;
     }

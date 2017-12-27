@@ -74,25 +74,35 @@
 
 #define AUDIO_HAL_VERSION "ALSA Audio Version: V1.1.0"
 
-
 #ifdef BOX_HAL
 int PCM_CARD = 0;
 int PCM_CARD_HDMI = 0;
 int PCM_CARD_SPDIF = 1;
+#elif defined(TINKER_AUDIO)
+int PCM_CARD = 0;
+int PCM_CARD_HDMI = 0;
+int PCM_CARD_SPDIF = 2;
 #else
 int PCM_CARD = 0;
 int PCM_CARD_HDMI = 1;
 int PCM_CARD_SPDIF = 2;
 #endif
 int PCM_BT = 3;
+int PCM_DEVICE = 0;
 #define PCM_TOTAL 4
-#define PCM_DEVICE 0
 #define PCM_DEVICE_SCO 1
 #define PCM_DEVICE_VOICE 2
 #define PCM_DEVICE_HDMIIN 2
 #define PCM_DEVICE_DEEP 3
 /* for bt client call */
 #define PCM_DEVICE_HFP 1
+
+#ifdef TINKER_AUDIO
+#define PCM_DEVICE_SCO_IN 0
+#define PCM_DEVICE_SCO_OUT 1
+#define PCM_CARD_IN 3 /* onboard alc4040 */
+#define PCM_DEVICE_IN 1 /* headset mic */
+#endif
 
 #define MIXER_CARD 0
 
@@ -105,7 +115,7 @@ int PCM_BT = 3;
  * output only supports 1 (stereo) and the multi channel HDMI output 2 (5.1 and 7.1) */
 #define MAX_SUPPORTED_CHANNEL_MASKS 2
 
-#ifndef RK3368
+#if !defined(RK3368) && !defined(TINKER_AUDIO)
 #define SPEEX_DENOISE_ENABLE
 #endif
 
@@ -247,7 +257,7 @@ struct pcm_config pcm_config_hfp = {
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
 };
-#ifdef BT_AP_SCO
+#if defined(BT_AP_SCO) || defined(TINKER_AUDIO)
 struct pcm_config pcm_config_ap_sco = {
     .channels = 2,
     .rate = 8000,
