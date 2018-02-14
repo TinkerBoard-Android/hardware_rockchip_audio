@@ -127,7 +127,7 @@ int PCM_DEVICE = 0;
 #define HDMI_BITSTREAM_MODE 6
 #define SPDIF_PASSTHROUGH_MODE 8
 
-#ifdef RK3399
+#ifdef USE_DRM
 #define HDMI_AUIOINFO_NODE      "/sys/class/drm/card0-HDMI-A-1/audioformat"
 #else
 #define HDMI_AUIOINFO_NODE      "/sys/class/display/HDMI/audioinfo"
@@ -223,7 +223,7 @@ struct pcm_config pcm_config_in = {
 #ifdef SPEEX_DENOISE_ENABLE
     .period_size = 1024,
 #else
-    .period_size = 128,
+    .period_size = 256,
 #endif
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
@@ -358,6 +358,7 @@ struct stream_out {
     pthread_mutex_t lock; /* see note below on mutex acquisition order */
     struct pcm *pcm[PCM_TOTAL];
     struct pcm_config config;
+    struct audio_config aud_config;
     unsigned int pcm_device;
     bool standby; /* true if all PCMs are inactive */
     audio_devices_t device;
@@ -422,6 +423,7 @@ struct string_to_enum {
 
 const struct string_to_enum out_channels_name_to_enum_table[] = {
     STRING_TO_ENUM(AUDIO_CHANNEL_OUT_STEREO),
+    STRING_TO_ENUM(AUDIO_CHANNEL_OUT_MONO),
     STRING_TO_ENUM(AUDIO_CHANNEL_OUT_5POINT1),
     STRING_TO_ENUM(AUDIO_CHANNEL_OUT_7POINT1),
 };

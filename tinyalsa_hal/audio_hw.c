@@ -513,6 +513,28 @@ static int read_hdmi_connect_state(void)
     return 0;
 }
 
+#define PROCCARDS                    "proc/asound/cards"
+#define VALUESIZE  80
+
+static inline bool hasSpdif()
+{
+    char line[VALUESIZE];
+    bool ret = false;
+    FILE *fd = fopen(PROCCARDS,"r");
+    if(NULL != fd){
+       memset(line, 0, VALUESIZE);
+       while((fgets(line,VALUESIZE,fd))!= NULL){
+           line[VALUESIZE-1]='\0';
+           if(strstr(line,"SPDIF")||(strstr(line,"spdif"))){
+              ret = true;
+              break;
+           }
+        }
+        fclose(fd);
+    }
+    return ret;
+}
+
 #endif
 
 /**
@@ -524,13 +546,14 @@ static int read_hdmi_connect_state(void)
  */
 static int mixer_mode_set(struct stream_out *out)
 {
-    int ret = 0;
-    struct mixer *mMixer;
+    int ret = -1;
+    struct mixer *mMixer = NULL;
     struct mixer_ctl *pctl;
-    struct mixer *mMixerPlayback;
-
-    mMixerPlayback = mixer_open_legacy(PCM_CARD_HDMI);
-    mMixer = mMixerPlayback;
+    mMixer = mixer_open_legacy(PCM_CARD_HDMI);
+    if(!mMixer) {
+	ALOGE("mMixer is a null point %s %d",__func__, __LINE__);
+	return ret;
+    }
     pctl = mixer_get_control(mMixer,"AUDIO MODE",0 );
     ALOGD("Now set mixer audio_mode is %d for drm",out->output_direct_mode);
     switch (out->output_direct_mode) {
@@ -544,10 +567,13 @@ static int mixer_mode_set(struct stream_out *out)
         ret = mixer_ctl_set_val(pctl , out->output_direct_mode);
         break;
     }
+
+    mixer_close_legacy(mMixer);
     if (ret!=0) {
         ALOGE("set_controls() can not set ctl!");
         return -EINVAL;
     }
+
     return ret;
 }
 
@@ -628,6 +654,11 @@ static int start_output_stream(struct stream_out *out)
         out->device &= ~AUDIO_DEVICE_OUT_SPEAKER;
     }
     read_snd_card_info();
+    if (direct_mode.output_mode == HW_PARAMS_FLAG_LPCM){
+        if(hasSpdif() && ((out->device & AUDIO_DEVICE_OUT_SPDIF)==0)){
+           out->device |= AUDIO_DEVICE_OUT_SPDIF;
+       }
+    }
 #ifdef RK3228
     if (direct_mode.output_mode == HW_PARAMS_FLAG_LPCM) {
         if (out->device & AUDIO_DEVICE_OUT_AUX_DIGITAL) {
@@ -647,7 +678,7 @@ static int start_output_stream(struct stream_out *out)
     if (out->device & AUDIO_DEVICE_OUT_AUX_DIGITAL) {
         if (connect_hdmi) {
 #ifdef BOX_HAL
-#ifdef RK3399
+#ifdef USE_DRM
             int ret = 0;
             ret = mixer_mode_set(out);
 
@@ -1023,7 +1054,7 @@ static uint32_t out_get_sample_rate(const struct audio_stream *stream)
 {
     struct stream_out *out = (struct stream_out *)stream;
 
-    return out->config.rate;
+    return property_get_bool("vts.native_server.on",false) ? out->aud_config.sample_rate : out->config.rate;
 }
 
 /**
@@ -1064,8 +1095,7 @@ static size_t out_get_buffer_size(const struct audio_stream *stream)
 static audio_channel_mask_t out_get_channels(const struct audio_stream *stream)
 {
     struct stream_out *out = (struct stream_out *)stream;
-
-    return out->channel_mask;
+    return property_get_bool("vts.native_server.on",false) ? out->aud_config.channel_mask : out->channel_mask;
 }
 
 /**
@@ -1077,7 +1107,9 @@ static audio_channel_mask_t out_get_channels(const struct audio_stream *stream)
  */
 static audio_format_t out_get_format(const struct audio_stream *stream)
 {
-    return AUDIO_FORMAT_PCM_16_BIT;
+    struct stream_out *out = (struct stream_out *)stream;
+
+    return property_get_bool("vts.native_server.on",false) ? out->aud_config.format : AUDIO_FORMAT_PCM_16_BIT;
 }
 
 /**
@@ -1149,8 +1181,7 @@ static void do_out_standby(struct stream_out *out)
             force_non_hdmi_out_standby(adev);
         }
 #ifdef BOX_HAL
-#ifdef RK3399
-        out->output_direct_mode = LPCM;
+#ifdef USE_DRM
         mixer_mode_set(out);
 #endif
 #endif
@@ -1277,6 +1308,14 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
     ALOGD("%s: kvpairs = %s", __func__, kvpairs);
 
     parms = str_parms_create_str(kvpairs);
+
+    //set channel_mask
+    ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_CHANNELS,
+                            value, sizeof(value));
+    if (ret >= 0) {
+        val = atoi(value);
+        out->aud_config.channel_mask = val;
+    }
 
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING,
                             value, sizeof(value));
@@ -2323,6 +2362,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         return -ENOMEM;
 
     out->supported_channel_masks[0] = AUDIO_CHANNEL_OUT_STEREO;
+    out->supported_channel_masks[1] = AUDIO_CHANNEL_OUT_MONO;
+    if(config != NULL)
+        memcpy(&(out->aud_config),config,sizeof(struct audio_config));
     out->channel_mask = AUDIO_CHANNEL_OUT_STEREO;
     if (devices == AUDIO_DEVICE_NONE)
         devices = AUDIO_DEVICE_OUT_SPEAKER;
@@ -2422,7 +2464,6 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         out->output_direct_mode = LPCM;
     }
 
-    ALOGD("out->config.rate = %d, out->config.channels = %d", out->config.rate, out->config.channels);
     direct_mode.output_mode = HW_PARAMS_FLAG_LPCM;
     if ((type == OUTPUT_HDMI_MULTI) && (devices & AUDIO_DEVICE_OUT_AUX_DIGITAL) && (device_mode == HDMI_BITSTREAM_MODE)) {
         direct_mode.output_mode = HW_PARAMS_FLAG_NLPCM;
@@ -2437,6 +2478,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         direct_mode.output_mode = HW_PARAMS_FLAG_LPCM;
         out->config.format = PCM_FORMAT_S16_LE;
     }
+
+    ALOGD("out->config.rate = %d, out->config.channels = %d out->config.format = %d",
+          out->config.rate, out->config.channels, out->config.format);
 
     out->stream.common.get_sample_rate = out_get_sample_rate;
     out->stream.common.set_sample_rate = out_set_sample_rate;
@@ -2460,10 +2504,6 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->dev = adev;
     out->dev->pre_output_device_id = OUT_DEVICE_SPEAKER;
     out->dev->pre_input_source_id = IN_SOURCE_MIC;
-
-    config->format = out_get_format(&out->stream.common);
-    config->channel_mask = out_get_channels(&out->stream.common);
-    config->sample_rate = out_get_sample_rate(&out->stream.common);
 
     out->standby = true;
     out->nframes = 0;
@@ -2962,10 +3002,7 @@ static int adev_close(hw_device_t *device)
 
     if (adev->hdmi_drv_fd >= 0)
         close(adev->hdmi_drv_fd);
-
-    if (hdmi_uevent_t != NULL) {
-        pthread_join(hdmi_uevent_t, NULL);
-    }
+    
     free(device);
     return 0;
 }
@@ -3035,10 +3072,7 @@ static int adev_open(const hw_module_t* module, const char* name,
 
     read_snd_card_info();
 #ifdef BOX_HAL
-    initchnsta();
-    if (!pthread_create(&hdmi_uevent_t, NULL, audio_hdmi_thread, NULL)) {
-        ALOGD("pthread_create error");
-    }
+    initchnsta();    
 #endif
     return 0;
 }
