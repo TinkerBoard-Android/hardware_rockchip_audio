@@ -99,7 +99,7 @@ int PCM_DEVICE = 0;
 
 #ifdef TINKER_AUDIO
 #define PCM_DEVICE_SCO_IN 0
-#define PCM_DEVICE_SCO_OUT 1
+#define PCM_DEVICE_SCO_OUT 0
 #define PCM_CARD_IN 3 /* onboard alc4040 */
 #define PCM_DEVICE_IN 1 /* headset mic */
 #endif
@@ -261,7 +261,7 @@ struct pcm_config pcm_config_hfp = {
 struct pcm_config pcm_config_ap_sco = {
     .channels = 2,
     .rate = 8000,
-    .period_size = 80,
+    .period_size = 480,
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
 };
