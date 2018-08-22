@@ -607,8 +607,8 @@ static int start_output_stream(struct stream_out *out)
     } else if (prop_audio_output[0] == '1') {
         PCM_CARD = 3;
         PCM_CARD_HDMI = 3;
-        PCM_DEVICE = 0;
-        ALOGD("card 3 , device 0 : SPDIF");
+        PCM_DEVICE = 1;
+        ALOGD("card 3 , device 1 : SPDIF");
     } else if (prop_audio_output[0] == '2') {
         PCM_CARD = 3;
         PCM_CARD_HDMI = 3;
