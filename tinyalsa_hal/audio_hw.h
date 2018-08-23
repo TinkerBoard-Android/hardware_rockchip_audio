@@ -261,7 +261,7 @@ struct pcm_config pcm_config_hfp = {
 struct pcm_config pcm_config_ap_sco = {
     .channels = 2,
     .rate = 8000,
-    .period_size = 480,
+    .period_size = 512,
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
 };
@@ -269,7 +269,7 @@ struct pcm_config pcm_config_ap_sco = {
 struct pcm_config pcm_config_in_bt = {
     .channels = 2,
     .rate = 8000,
-    .period_size = 120,
+    .period_size = 128,
     .period_count = 4,
     .format = PCM_FORMAT_S16_LE,
     .flag = HW_PARAMS_FLAG_LPCM,
